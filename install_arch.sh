@@ -1,125 +1,100 @@
-#!/bin/bash
 
-# Check and import key if not already done
-if ! pacman-key --list-keys 3056513887B78AEB &>/dev/null; then
-  sudo pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
-  sudo pacman-key --lsign-key 3056513887B78AEB
-fi
-
-# Install Chaotic AUR keyring and mirror list if not already done
-if ! grep -q 'chaotic-aur' /etc/pacman.conf; then
-  sudo pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
-  sudo pacman -U 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
-  echo '[chaotic-aur]' | sudo tee -a /etc/pacman.conf
-  echo 'Include = /etc/pacman.d/chaotic-mirrorlist' | sudo tee -a /etc/pacman.conf
-fi
-
-# Update the system
-sudo pacman -Syu
-
-# Generate host ID
-zgenhostid
-
-# Define disk
-DISK=/dev/disk/by-id/nvme0n1
-
-# Partition the disk
-sgdisk --zap-all $DISK
-sgdisk -n1:1M:+512M -t1:EF00 $DISK
-sgdisk -n2:0:0 -t2:BF00 $DISK
-
-# Create ZFS pool
-zpool create -f -o ashift=12 \
- -O compression=zstd \
- -O acltype=posixacl \
- -O xattr=sa \
- -O relatime=on \
- -o autotrim=on \
- -m none zroot ${DISK}-part2
-
-# Create ZFS datasets
-zfs create -o mountpoint=none zroot/ROOT
-zfs create -o mountpoint=/ -o canmount=noauto zroot/ROOT/arch
-zfs create -o mountpoint=/Data zroot/Data
-
-# Export and re-import the pool
-zpool export zroot
-zpool import -N -R /mnt zroot
-zfs mount zroot/ROOT/arch
-zfs mount zroot/Data
-
-# Format and mount the EFI partition
-mkfs.vfat -F 32 -n EFI $DISK-part1
-mkdir /mnt/efi
-mount $DISK-part1 /mnt/efi
-
-# Install base system
-pacstrap /mnt base linux-lts linux-firmware linux-lts-headers wget nano efibootmgr
-pacstrap /mnt zfs-dkms
-
-# Copy configuration files
-cp /etc/hostid /mnt/etc
-cp /etc/resolv.conf /mnt/etc
-mkdir -p /mnt/etc/zfs
-cp /etc/pacman.conf /mnt/etc/pacman.conf
-
-# Generate fstab
-genfstab /mnt > /mnt/etc/fstab
-echo "# Edit /etc/fstab to keep only the line containing /efi" > /mnt/edit_fstab.sh
-chmod +x /mnt/edit_fstab.sh
-
-# Create a script to run inside the chroot
-cat > /mnt/chroot_setup.sh << 'EOF'
-#!/bin/bash
 
 # Set timezone
-ln -sf /usr/share/zoneinfo/Europe/London /etc/localtime
-hwclock --systohc
+echo "Setting timezone..." | tee -a "\$CHROOT_LOG"
+log_cmd ln -sf /usr/share/zoneinfo/Europe/London /etc/localtime
+log_cmd hwclock --systohc
+echo "Timezone set to Europe/London" | tee -a "\$CHROOT_LOG"
+check_proceed
 
-# Uncomment needed locales
-sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-locale-gen
+# Configure locale
+echo "Configuring locale..." | tee -a "\$CHROOT_LOG"
+log_cmd sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+log_cmd locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+echo "Set locale to en_US.UTF-8" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Set hostname
+echo "Setting hostname..." | tee -a "\$CHROOT_LOG"
 read -p "Enter hostname: " hostname
-echo "$hostname" > /etc/hostname
+echo "\$hostname" > /etc/hostname
 echo "127.0.0.1   localhost" > /etc/hosts
 echo "::1         localhost" >> /etc/hosts
-echo "127.0.1.1   $hostname" >> /etc/hosts
+echo "127.0.1.1   \$hostname" >> /etc/hosts
+echo "Set hostname to \$hostname" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Configure initramfs
-sed -i 's/HOOKS=.*/HOOKS=(base udev autodetect modconf block keyboard zfs filesystems)/' /etc/mkinitcpio.conf
-mkinitcpio -P
+echo "Configuring initramfs..." | tee -a "\$CHROOT_LOG"
+log_cmd sed -i 's/HOOKS=.*/HOOKS=(base udev autodetect modconf block keyboard zfs filesystems)/' /etc/mkinitcpio.conf
+log_cmd mkinitcpio -P
+echo "Initramfs configured successfully" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Set root password
-echo "Set root password:"
-passwd
+echo "Setting root password:" | tee -a "\$CHROOT_LOG"
+until passwd; do
+  echo "Password setting failed, try again" | tee -a "\$CHROOT_LOG"
+done
+echo "Root password set successfully" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Configure ZFS boot
-zpool set bootfs=zroot/ROOT/arch zroot
-systemctl enable zfs-import-cache zfs-import.target zfs-mount zfs-zed zfs.target
+echo "Configuring ZFS boot services..." | tee -a "\$CHROOT_LOG"
+log_cmd zpool set bootfs=zroot/ROOT/arch zroot
+log_cmd systemctl enable zfs-import-cache
+log_cmd systemctl enable zfs-import.target
+log_cmd systemctl enable zfs-mount
+log_cmd systemctl enable zfs-zed
+log_cmd systemctl enable zfs.target
+echo "ZFS boot services configured successfully" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Set up ZFSBootMenu
-mkdir -p /efi/EFI/zbm
-wget https://get.zfsbootmenu.org/latest.EFI -O /efi/EFI/zbm/zfsbootmenu.EFI
+echo "Setting up ZFSBootMenu..." | tee -a "\$CHROOT_LOG"
+log_cmd mkdir -p /efi/EFI/zbm
+log_cmd wget https://get.zfsbootmenu.org/latest.EFI -O /efi/EFI/zbm/zfsbootmenu.EFI
+echo "ZFSBootMenu setup completed" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Create EFI boot entry
-disk_base=$(echo "$DISK" | sed 's/-part[0-9]*$//')
-efibootmgr --disk $disk_base --part 1 --create --label "ZFSBootMenu" --loader '\EFI\zbm\zfsbootmenu.EFI' --unicode "spl_hostid=$(hostid) zbm.timeout=3 zbm.prefer=zroot zbm.import_policy=hostid" --verbose
+echo "Creating EFI boot entry..." | tee -a "\$CHROOT_LOG"
+disk_base="\$(echo "$DISK" | sed 's/-part[0-9]*\$//')"
+log_cmd efibootmgr --disk \$disk_base --part 1 --create --label "ZFSBootMenu" --loader '\\EFI\\zbm\\zfsbootmenu.EFI' --unicode "spl_hostid=\$(hostid) zbm.timeout=3 zbm.prefer=zroot zbm.import_policy=hostid" --verbose
+echo "EFI boot entry created successfully" | tee -a "\$CHROOT_LOG"
+check_proceed
 
 # Set ZFS command line
-zfs set org.zfsbootmenu:commandline="noresume init_on_alloc=0 rw spl.spl_hostid=$(hostid)" zroot/ROOT
+echo "Setting ZFS command line..." | tee -a "\$CHROOT_LOG"
+log_cmd zfs set org.zfsbootmenu:commandline="noresume init_on_alloc=0 rw spl.spl_hostid=\$(hostid)" zroot/ROOT
+echo "ZFS command line set successfully" | tee -a "\$CHROOT_LOG"
+
+echo "Chroot setup completed at \$(date)" | tee -a "\$CHROOT_LOG"
+echo "Log saved to \$CHROOT_LOG"
+echo ""
+echo "ALL CONFIGURATION COMPLETED SUCCESSFULLY!"
+echo "Exit the chroot by typing 'exit' and then continue with the main script."
 EOF
 
 chmod +x /mnt/chroot_setup.sh
+echo "Created chroot_setup.sh script" | tee -a "$LOG_FILE"
+check_proceed
 
 # Chroot into the system
-echo "Now you will be chrooted into the new system to complete the setup."
-echo "Run the script /chroot_setup.sh to continue the installation."
-arch-chroot /mnt
+echo "Now you will be chrooted into the new system to complete the setup." | tee -a "$LOG_FILE"
+echo "Run the script /chroot_setup.sh to continue the installation." | tee -a "$LOG_FILE"
+echo "Entering chroot..." | tee -a "$LOG_FILE"
+log_cmd arch-chroot /mnt
+echo "Exited from chroot environment." | tee -a "$LOG_FILE"
+check_proceed
 
 # After exiting the chroot, unmount and reboot
-umount /mnt/efi
-zpool export zroot
-echo "Installation complete. You can now reboot the system."
+echo "Unmounting filesystems and exporting ZFS pool..." | tee -a "$LOG_FILE"
+log_cmd umount /mnt/efi
+log_cmd zpool export zroot
+
+echo "Installation complete! The system is ready to reboot." | tee -a "$LOG_FILE"
+echo "Full installation log saved to $LOG_FILE and copied to the new system." | tee -a "$LOG_FILE"
+echo ""
+echo "Type 'reboot' to restart into your new ZFS system."
