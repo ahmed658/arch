@@ -17,94 +17,109 @@ fi
 # Update the system
 sudo pacman -Syu
 
-# Generate and set hostid
-if [ ! -f /etc/hostid ]; then
-  sudo zgenhostid
-fi
+# Generate host ID
+zgenhostid
 
-# Disk and partition variables
-DISK=/dev/nvme0n1
-EFI_PART=${DISK}p1
-ZFS_PART=${DISK}p2
+# Define disk
+DISK=/dev/disk/by-id/nvme0n1
 
 # Partition the disk
-parted --script $DISK mklabel gpt
-parted --script $DISK mkpart primary fat32 1MiB 2049MiB
-parted --script $DISK set 1 boot on
-parted --script $DISK mkpart primary 2049MiB 100GiB
-
-# Format the EFI partition
-sudo mkfs.vfat -F 32 -n EFI $EFI_PART
+sgdisk --zap-all $DISK
+sgdisk -n1:1M:+512M -t1:EF00 $DISK
+sgdisk -n2:0:0 -t2:BF00 $DISK
 
 # Create ZFS pool
-sudo zpool create -f -O mountpoint=none zroot $ZFS_PART
-sudo zfs create -o mountpoint=legacy zroot/ROOT
-sudo zfs create -o mountpoint=legacy zroot/ROOT/default
-sudo zpool set bootfs=zroot/ROOT/default zroot
+zpool create -f -o ashift=12 \
+ -O compression=zstd \
+ -O acltype=posixacl \
+ -O xattr=sa \
+ -O relatime=on \
+ -o autotrim=on \
+ -m none zroot ${DISK}-part2
 
-# Mount the partitions
-sudo mount -t zfs zroot/ROOT/default /mnt
-sudo mkdir -p /mnt/boot
-sudo mount $EFI_PART /mnt/boot
+# Create ZFS datasets
+zfs create -o mountpoint=none zroot/ROOT
+zfs create -o mountpoint=/ -o canmount=noauto zroot/ROOT/arch
+zfs create -o mountpoint=/Data zroot/Data
 
-# Install base system and tools
-sudo pacstrap /mnt base linux-lts linux-firmware linux-lts-headers wget nano vim efibootmgr zfs-dkms
+# Export and re-import the pool
+zpool export zroot
+zpool import -N -R /mnt zroot
+zfs mount zroot/ROOT/arch
+zfs mount zroot/Data
 
-# Copy necessary files
-sudo cp /etc/hostid /mnt/etc
-sudo cp /etc/resolv.conf /mnt/etc
-sudo mkdir -p /mnt/etc/zfs
-sudo cp /etc/pacman.conf /mnt/etc/pacman.conf
+# Format and mount the EFI partition
+mkfs.vfat -F 32 -n EFI $DISK-part1
+mkdir /mnt/efi
+mount $DISK-part1 /mnt/efi
 
-# Generate and edit fstab
-sudo genfstab -U /mnt > /mnt/etc/fstab
-sudo sed -i '/^\/mnt\/boot/!d' /mnt/etc/fstab
+# Install base system
+pacstrap /mnt base linux-lts linux-firmware linux-lts-headers wget nano efibootmgr
+pacstrap /mnt zfs-dkms
 
-# Chroot into the new system
-arch-chroot /mnt <<EOF
+# Copy configuration files
+cp /etc/hostid /mnt/etc
+cp /etc/resolv.conf /mnt/etc
+mkdir -p /mnt/etc/zfs
+cp /etc/pacman.conf /mnt/etc/pacman.conf
+
+# Generate fstab
+genfstab /mnt > /mnt/etc/fstab
+echo "# Edit /etc/fstab to keep only the line containing /efi" > /mnt/edit_fstab.sh
+chmod +x /mnt/edit_fstab.sh
+
+# Create a script to run inside the chroot
+cat > /mnt/chroot_setup.sh << 'EOF'
+#!/bin/bash
 
 # Set timezone
 ln -sf /usr/share/zoneinfo/Europe/London /etc/localtime
 hwclock --systohc
 
-# Localization
-sed -i 's/#en_GB.UTF-8 UTF-8/en_GB.UTF-8 UTF-8/' /etc/locale.gen
+# Uncomment needed locales
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
-echo 'LANG=en_GB.UTF-8' > /etc/locale.conf
+echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 
-# Network Configuration
-echo 'Small Brother' > /etc/hostname
-cat <<EOT >> /etc/hosts
-127.0.0.1   localhost
-::1         localhost
-127.0.1.1   Small Brother.localdomain Small Brother
-EOT
+# Set hostname
+read -p "Enter hostname: " hostname
+echo "$hostname" > /etc/hostname
+echo "127.0.0.1   localhost" > /etc/hosts
+echo "::1         localhost" >> /etc/hosts
+echo "127.0.1.1   $hostname" >> /etc/hosts
 
-# Keyboard layout
-echo "KEYMAP=us" > /etc/vconsole.conf
-
-# Configure initramfs for ZFS
-sed -i 's/^HOOKS.*/HOOKS=(base udev autodetect modconf block keyboard zfs filesystems)/' /etc/mkinitcpio.conf
+# Configure initramfs
+sed -i 's/HOOKS=.*/HOOKS=(base udev autodetect modconf block keyboard zfs filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
 # Set root password
-echo "root:AcerPowerF#1" | chpasswd
+echo "Set root password:"
+passwd
 
-# Set ZFS configurations
-zpool set cachefile=/etc/zfs/zpool.cache zroot
-zpool set bootfs=zroot/ROOT/default zroot
+# Configure ZFS boot
+zpool set bootfs=zroot/ROOT/arch zroot
 systemctl enable zfs-import-cache zfs-import.target zfs-mount zfs-zed zfs.target
 
-# Install ZFS Boot Menu
-mkdir -p /boot/efi/EFI/zbm
-wget https://get.zfsbootmenu.org/latest.EFI -O /boot/efi/EFI/zbm/zfsbootmenu.EFI
-efibootmgr --disk $DISK --part 1 --create --label "ZFSBootMenu" --loader '\EFI\zbm\zfsbootmenu.EFI' --unicode "spl_hostid=\$(hostid) zbm.timeout=3 zbm.prefer=zroot zbm.import_policy=hostid" --verbose
-zfs set org.zfsbootmenu:commandline="noresume init_on_alloc=0 rw spl.spl_hostid=\$(hostid)" zroot/ROOT
+# Set up ZFSBootMenu
+mkdir -p /efi/EFI/zbm
+wget https://get.zfsbootmenu.org/latest.EFI -O /efi/EFI/zbm/zfsbootmenu.EFI
 
+# Create EFI boot entry
+disk_base=$(echo "$DISK" | sed 's/-part[0-9]*$//')
+efibootmgr --disk $disk_base --part 1 --create --label "ZFSBootMenu" --loader '\EFI\zbm\zfsbootmenu.EFI' --unicode "spl_hostid=$(hostid) zbm.timeout=3 zbm.prefer=zroot zbm.import_policy=hostid" --verbose
+
+# Set ZFS command line
+zfs set org.zfsbootmenu:commandline="noresume init_on_alloc=0 rw spl.spl_hostid=$(hostid)" zroot/ROOT
 EOF
 
-# Unmount and export ZFS pool
-sudo umount /mnt/boot
-sudo zpool export zroot
+chmod +x /mnt/chroot_setup.sh
 
-echo "Installation complete! You can now reboot."
+# Chroot into the system
+echo "Now you will be chrooted into the new system to complete the setup."
+echo "Run the script /chroot_setup.sh to continue the installation."
+arch-chroot /mnt
+
+# After exiting the chroot, unmount and reboot
+umount /mnt/efi
+zpool export zroot
+echo "Installation complete. You can now reboot the system."
