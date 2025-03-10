@@ -64,7 +64,7 @@ echo "Chaotic AUR configuration verification completed."
 confirm
 
 echo "Updating system packages..."
-sudo pacman -Syu
+sudo pacman -Sy
 echo "System update completed successfully."
 confirm
 
