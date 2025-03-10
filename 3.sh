@@ -41,7 +41,7 @@ confirm
 echo "Partitioning disk $DISK..."
 sgdisk --zap-all "$DISK"
 sgdisk -n1:1M:+2G -t1:EF00 "$DISK"
-sgdisk -n2:0:+100G -t2:BF00 "$DISK"
+sgdisk -n2:0:+50G -t2:BF00 "$DISK"
 echo "Disk partitioning completed successfully."
 confirm
 
