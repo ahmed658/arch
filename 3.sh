@@ -12,8 +12,18 @@ hostid
 echo "Host ID verification completed."
 confirm
 
-# Define disk (you can specify the disk directly)
-DISK="/dev/disk/by-id/nvme0n1"
+# List available disks
+echo "Listing available disks..."
+lsblk -d -n -o NAME,SIZE
+echo "Please select a disk by typing the number corresponding to the list (e.g., 0 for sda, 1 for sdb):"
+IFS=$'\n' read -d '' -r -a disks <<< "$(lsblk -d -n -o NAME)"
+
+for i in "${!disks[@]}"; do
+  echo "$i: ${disks[$i]}"
+done
+
+read -p "Enter the disk number: " disk_number
+DISK="/dev/${disks[$disk_number]}"
 echo "Selected disk: $DISK"
 confirm
 
@@ -30,8 +40,8 @@ confirm
 # Partition the disk
 echo "Partitioning disk $DISK..."
 sgdisk --zap-all "$DISK"
-sgdisk -n1:1M:+512M -t1:EF00 "$DISK"
-sgdisk -n2:0:0 -t2:BF00 "$DISK"
+sgdisk -n1:1M:+2G -t1:EF00 "$DISK"
+sgdisk -n2:0:+100G -t2:BF00 "$DISK"
 echo "Disk partitioning completed successfully."
 confirm
 
