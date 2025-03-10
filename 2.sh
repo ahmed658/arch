@@ -20,6 +20,6 @@ confirm
 
 # Update the system
 echo "Updating system packages..."
-sudo pacman -Syu
+sudo pacman -Sy
 echo "System update completed successfully."
 confirm
