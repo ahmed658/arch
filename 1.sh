@@ -1,19 +1,10 @@
 #!/bin/bash
 
-# Function to confirm proceeding
-confirm() {
-  read -r -p "Proceed with the next step? (type 'yes' to continue) " response
-  if [ "$response" != "yes" ]; then
-    echo "Operation cancelled by user."
-    exit 1
-  fi
-}
-
 # Create log file
 LOG_FILE="zfs_install_$(date +%Y%m%d_%H%M%S).log"
 touch "$LOG_FILE"
 
-# Function to log commands and their outputs
+# Log commands and their outputs
 log_cmd() {
   echo "Running: $@"
   "$@"
@@ -36,10 +27,8 @@ if ! pacman-key --list-keys 3056513887B78AEB &>/dev/null; then
 else
   echo "Key already imported."
 fi
-confirm
 
 # Verify key import
 echo "Verifying key import..."
 pacman-key --list-keys 3056513887B78AEB
 echo "Key verification completed."
-confirm
