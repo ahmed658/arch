@@ -1,8 +1,3 @@
-#!/bin/bash
-
-# Copy log file to the new system
-cp "$LOG_FILE" "/mnt/root/"
-
 # Create a script to run inside the chroot
 cat > /mnt/chroot_setup.sh << EOF
 #!/bin/bash
