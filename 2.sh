@@ -10,16 +10,13 @@ if ! grep -q 'chaotic-aur' /etc/pacman.conf; then
 else
   echo "Chaotic AUR repository already configured."
 fi
-confirm
 
 # Verify Chaotic AUR configuration
 echo "Verifying Chaotic AUR configuration..."
 grep 'chaotic-aur' /etc/pacman.conf
 echo "Chaotic AUR configuration verification completed."
-confirm
 
 # Update the system
 echo "Updating system packages..."
 sudo pacman -Sy
 echo "System update completed successfully."
-confirm
