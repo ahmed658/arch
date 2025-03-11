@@ -46,7 +46,7 @@ echo "Partition table display completed."
 
 # Ensure disk partitions are detected
 echo "Waiting for partition updates to be detected by the system..."
-sleep 3
+sleep 30
 if [ ! -e "${DISK}-part1" ] || [ ! -e "${DISK}-part2}" ]; then
   echo "Error: Disk partitions not detected. Please check if ${DISK}-part1 and ${DISK}-part2 exist."
   exit 1
