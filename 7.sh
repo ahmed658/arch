@@ -3,17 +3,20 @@
 # Copy configuration files
 echo "Copying configuration files..."
 cp /etc/hostid /mnt/etc
+sleep 10
 cp /etc/resolv.conf /mnt/etc
+sleep 10
 mkdir -p /mnt/etc/zfs
+sleep 10
 cp /etc/pacman.conf /mnt/etc/pacman.conf
 echo "Configuration files copied successfully."
-confirm
+sleep 10
 
 # Generate fstab
 echo "Generating fstab..."
 genfstab /mnt > /mnt/etc/fstab
 echo "Created fstab. Remember to keep only the line containing /efi."
-confirm
+sleep 10
 
 # Create a script to edit fstab
 cat > /mnt/edit_fstab.sh << 'EOF'
@@ -29,4 +32,4 @@ cat /etc/fstab
 EOF
 chmod +x /mnt/edit_fstab.sh
 echo "Created edit_fstab.sh script"
-confirm
+sleep 10
