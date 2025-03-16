@@ -1,4 +1,3 @@
-```bash
 #!/bin/bash
 
 # Generate host ID
